@@ -14,7 +14,7 @@ from typing import Tuple
 # NOTE: ALL MODELS ARE MATERN 12 KERNELS
 class KroneckerStructure(gpytorch.Module, ABC):
     """ 
-    Parent class for Gaussian Process Regression in 2D with Kronecker structure, (inter domain) inducing features with a Matern 1/2 kernel
+    Parent class for Gaussian Process Regression in 2D with Kronecker structure, (inter domain) inducing features
     """
     def __init__(self,
                  X : torch.Tensor,
@@ -284,9 +284,9 @@ class KroneckerStructure(gpytorch.Module, ABC):
 #                                                                                                  #
 ####################################################################################################
 
-class SVGP(KroneckerStructure):
+class Matern12SVGP(KroneckerStructure):
 
-    """ SVGP class for 2D data using Kronecker structure """
+    """ SVGP class for 2D data using Kronecker structure with Matern 1/2 kernel """
 
     def __init__(self, 
                  X : torch.Tensor, 
@@ -344,9 +344,9 @@ class SVGP(KroneckerStructure):
 #                                                                                                  #
 ####################################################################################################
 
-class VFFGP(KroneckerStructure):
+class Matern12VFFGP(KroneckerStructure):
 
-    """ VFFGP class for 2D data using Kronecker structure """
+    """ VFFGP class for 2D data using Kronecker structure with Matern 1/2 kernel """
 
     def __init__(self, 
                  X : torch.Tensor, 
@@ -531,9 +531,9 @@ class VFFGP(KroneckerStructure):
 #                                                                                                  #
 #################################################################################################### 
 
-class ASVGP(KroneckerStructure):
+class Matern12B1SplineASVGP(KroneckerStructure):
 
-    """ VFFGP class for 2D data using Kronecker structure """
+    """ VFFGP class for 2D data using Kronecker structure with Matérn 1/2 covariances and B1-spline basis """
 
     def __init__(self, 
                  X : torch.Tensor, 
@@ -568,7 +568,7 @@ class ASVGP(KroneckerStructure):
                         dimkernel : gpytorch.kernels,
                         band: int) -> torch.Tensor:
         """ 
-        Computes the RKHS inner product for the B-spline of order 1 
+        Computes the RKHS inner product for a B-spline basis of order 1 (i.e along a dimension)
 
         Arguments:
             band : int, the band of the matrix to return (0 for main diagonal, 1 for first upper and lower diagonal) 
@@ -603,6 +603,16 @@ class ASVGP(KroneckerStructure):
     def _Kuu_along_dim(self,
                     dimbasis : FourierBasis,
                     dimkernel : gpytorch.kernels,) -> torch.Tensor:
+        """
+        Computes the Kuu matrix for the Matérn 1/2 covarainces along a dimension 
+
+        Arguments:
+            dimbasis (FourierBasis)         : basis for the dimension
+            dimkernel (gpytorch.kernels)    : kernel for the dimension
+
+        Returns:
+            (torch.Tensor)                  : Kuu matrix for the dimension
+        """
          # inner products
         phi_mm = self.rkhs_inner_product(dimbasis, dimkernel, band=0)
         phi_mmp1 = self.rkhs_inner_product(dimbasis, dimkernel, band=1)
@@ -613,16 +623,46 @@ class ASVGP(KroneckerStructure):
     def _Kuf_along_dim(self,
                     dimbasis : FourierBasis,
                     x : torch.Tensor) -> torch.Tensor:
+        """
+        Computes the Kuf matrix for the Matérn 1/2 covarainces along a dimension 
+
+        Arguments:
+            dimbasis (FourierBasis)         : basis for the dimension
+
+        Returns:
+            (torch.Tensor)                  : Kuu matrix for the dimension
+        """
         return dimbasis(x)
     
-    def _Kuu(self,):
+    def _Kuu(self,) -> torch.Tensor:
+        """ 
+        Computes the Kuu matrix between the inducing features
+        - [Kuu]_{ij} = Cov[u_i, u_j]
+
+        Arguments:
+            None
+
+        Returns:
+            Kuu (torch.tensor)  : m x m matrix of inducing feature covariances
+        """
         Kuu_1 = self._Kuu_along_dim(self.basis_1, self.kernel_1)
         Kuu_2 = self._Kuu_along_dim(self.basis_2, self.kernel_2)
         # compute the kronecker product
         Kuu = torch.kron(Kuu_1, Kuu_2)
         return Kuu
 
-    def _Kuf(self, x):
+    def _Kuf(self, 
+             x : torch.Tensor) -> torch.Tensor:
+        """ 
+        Computes the Kuf matrix between the inducing features and the latent function
+        - [Kuf]_{ij} = Cov[u_i, f(x_j)]
+
+        Arguments:
+            x (torch.tensor)    : indicies for function evaluations
+
+        Returns:
+            Kuf (torch.tensor)  : m x n matrix of inducing feature covariances
+        """
         Kuf_1 = self._Kuf_along_dim(self.basis_1, x[:, 0])
         Kuf_2 = self._Kuf_along_dim(self.basis_2, x[:, 1])
         Kuf = torch.stack([k1 * k2 for k2 in Kuf_1 for k1 in Kuf_2], dim = 0)
@@ -665,8 +705,46 @@ class GriddedGP(KroneckerStructure):
         # basis
         self.basis_1 = B0SplineBasis(self.mesh_1)
         self.basis_2 = B0SplineBasis(self.mesh_2)
+    
+    def _Kuu_along_dim(self, 
+                    dimbasis : torch.Tensor,
+                    dimkernel : gpytorch.kernels,) -> torch.Tensor:
+        """ 
+        Computes the Kuu matrix between the inducing variables (i.e Cov[v_i, v_j]) 
+        
+        The implementation uses the following trick:
+        1. Cov[v_i, v_j] = Cov[v_i, v_{i + k}] for k = [0, 1, 2, ..., m]
+        2. Using 1 we can re-write the covariances as a Toeplitz matrix with first row given by
+            -> first_row = exp{ -(k - 1) * delta / l} + exp{ -(k + 1) * delta / l} - 2 * exp{ -k * delta / l}
+        3. THe diagonal is given by:
+            -> first_row[0] = 2 * (exp{ -delta / l} + (delta / l) - 1)
 
+        Arguments:
+            basis (SplineBasis)     : the spline basis
+            scalesigma (float)      : the scale parameter of the kernel
+            lengthscale (float)     : the lengthscale parameter of the kernel
 
+        Returns:
+            Kuu (torch.Tensor)      : the Kuu matrix of shape (m, m)
+        """
+        # get parameters
+        m = dimbasis.m
+        delta = dimbasis.delta
+        scalesigma = dimkernel.outputscale
+        lengthscale = dimkernel.base_kernel.lengthscale[0]
+        k = torch.arange(m)
+        # compute first row of Kuu 
+        first_row = (
+            torch.exp((-(k - 1) * delta) / lengthscale) + 
+            torch.exp((-(k + 1) * delta) / lengthscale) - 
+            2 * torch.exp((-k * delta) / lengthscale)
+            )
+        # add diagonal
+        first_row[0] = 2 * (torch.exp(-delta / lengthscale) + (delta / lengthscale) - 1) 
+        Kuu = operators.ToeplitzLinearOperator(first_row).to_dense()
+        Kuu *= (lengthscale ** 2 * scalesigma)
+        return Kuu
+    
     def _Kuf_along_dim(self,
                     dimbasis : torch.Tensor,
                     dimkernel : gpytorch.kernels,
@@ -718,59 +796,38 @@ class GriddedGP(KroneckerStructure):
         Kuf *= scalesigma
         return Kuf
     
-    def _Kuu_along_dim(self, 
-                    dimbasis : torch.Tensor,
-                    dimkernel : gpytorch.kernels,) -> torch.Tensor:
+    def _Kuu(self,) -> torch.Tensor:
         """ 
-        Computes the Kuu matrix between the inducing variables (i.e Cov[v_i, v_j]) 
-        
-        The implementation uses the following trick:
-        1. Cov[v_i, v_j] = Cov[v_i, v_{i + k}] for k = [0, 1, 2, ..., m]
-        2. Using 1 we can re-write the covariances as a Toeplitz matrix with first row given by
-            -> first_row = exp{ -(k - 1) * delta / l} + exp{ -(k + 1) * delta / l} - 2 * exp{ -k * delta / l}
-        3. THe diagonal is given by:
-            -> first_row[0] = 2 * (exp{ -delta / l} + (delta / l) - 1)
+        Computes the Kuu matrix between the inducing features
+        - [Kuu]_{ij} = Cov[u_i, u_j]
 
         Arguments:
-            basis (SplineBasis)     : the spline basis
-            scalesigma (float)      : the scale parameter of the kernel
-            lengthscale (float)     : the lengthscale parameter of the kernel
+            None
 
         Returns:
-            Kuu (torch.Tensor)      : the Kuu matrix of shape (m, m)
+            Kuu (torch.tensor)  : m x m matrix of inducing feature covariances
         """
-        # get parameters
-        m = dimbasis.m
-        delta = dimbasis.delta
-        scalesigma = dimkernel.outputscale
-        lengthscale = dimkernel.base_kernel.lengthscale[0]
-        k = torch.arange(m)
-        # compute first row of Kuu 
-        first_row = (
-            torch.exp((-(k - 1) * delta) / lengthscale) + 
-            torch.exp((-(k + 1) * delta) / lengthscale) - 
-            2 * torch.exp((-k * delta) / lengthscale)
-            )
-        # add diagonal
-        first_row[0] = 2 * (torch.exp(-delta / lengthscale) + (delta / lengthscale) - 1) 
-        Kuu = operators.ToeplitzLinearOperator(first_row).to_dense()
-        Kuu *= (lengthscale ** 2 * scalesigma)
-        return Kuu
-    
-    def _Kuf(self,
-             x : torch.Tensor) -> torch.Tensor:
-        """ Computes Kuf """
-        Kuf_1 = self._Kuf_along_dim(self.basis_1, self.kernel_1, x[:, 0])
-        Kuf_2 = self._Kuf_along_dim(self.basis_2, self.kernel_2, x[:, 1])
-        Kuf = torch.stack([k1 * k2 for k2 in Kuf_1 for k1 in Kuf_2], dim = 0)
-        return Kuf
-    
-    def _Kuu(self,) -> torch.Tensor:
-        """ Computes Kuu """
         Kuu_1 = self._Kuu_along_dim(self.basis_1, self.kernel_1)
         Kuu_2 = self._Kuu_along_dim(self.basis_2, self.kernel_2)
         Kuu  = torch.kron(Kuu_1, Kuu_2)
         return Kuu
+    
+    def _Kuf(self,
+             x : torch.Tensor) -> torch.Tensor:
+        """ 
+        Computes the Kuf matrix between the inducing features and the latent function
+        - [Kuf]_{ij} = Cov[u_i, f(x_j)]
+
+        Arguments:
+            x (torch.tensor)    : indicies for function evaluations
+
+        Returns:
+            Kuf (torch.tensor)  : m x n matrix of inducing feature covariances
+        """
+        Kuf_1 = self._Kuf_along_dim(self.basis_1, self.kernel_1, x[:, 0])
+        Kuf_2 = self._Kuf_along_dim(self.basis_2, self.kernel_2, x[:, 1])
+        Kuf = torch.stack([k1 * k2 for k2 in Kuf_1 for k1 in Kuf_2], dim = 0)
+        return Kuf
     
     def q_v(self,):
         """ 
