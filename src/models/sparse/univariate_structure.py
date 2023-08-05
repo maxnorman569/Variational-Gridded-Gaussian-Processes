@@ -12,14 +12,27 @@ import linear_operator.operators as operators
 from typing import Tuple
 
 
-# BASE 
-#- GRIDDED GP CLASS - 1D
 class SparseGP(gpytorch.Module, ABC):
-    """ Gridded GP class for a Matern 1/2 kernel in 1 dimension """
+    """ 
+    Base class for Sparse GP models in 1-dimensional input space 
+
+    Need to set the following attributes in child class:
+        - self.kernel (gpytorch.kernels.Kernel) : kernel function
+ 
+    Need to set the following methods in child class:
+        - self._Kuf(X : torch.Tensor) -> torch.Tensor : computes the covariance matrix between the inducing points and the training points
+        - self._Kuu() -> torch.Tensor : computes the covariance matrix between the inducing points
+    """
     def __init__(self, 
                  X : torch.Tensor, 
                  y : torch.Tensor, ) -> 'SparseGP':
-        """ """
+        """ 
+        constructs a Sparse GP model 
+        
+        Arguments:
+            X (torch.Tensor)    : (n x 1) training inputs
+            y (torch.Tensor)    : (n x 1) training targets
+        """
         super().__init__()
         # data
         self.train_inputs = (X,)
@@ -259,7 +272,7 @@ class SparseGP(gpytorch.Module, ABC):
 # Parent class for SVGP
 class SVGP(SparseGP):
 
-    """ SVGP with Matern 1/2 kernel for 1D regression """
+    """ Sparse Variational Gaussian Process (SVGP) """
 
     def __init__(self, 
                  X : torch.Tensor, 
@@ -350,7 +363,7 @@ class Matern52SVGP(SVGP):
 # Parent class for VFFGP
 class VFFGP(SparseGP, ABC):
 
-    """ Parent class for VFFGP with Matern kernel for 1D regression """
+    """ Variational Fourier Features Gaussian Process (VFFGP) """
 
     def __init__(self, 
                  X : torch.Tensor, 
@@ -358,11 +371,9 @@ class VFFGP(SparseGP, ABC):
                  nfrequencies : int, 
                  dim1lims : Tuple[float, float]) -> 'VFFGP':
         """ 
-        Class inherits from gpytorch.Module and implements the VFF GP model with a Matern 1/2 kernel, zero mean and Gaussian likelihood
-
         Arguments:
-            X (torch.Tensor)                : training inputs (n,) 
-            y (torch.Tensor)                : training targets
+            train_x (torch.tensor)          : (n x 1) training inputs 
+            train_y (torch.tensor)          : (n x 1) training targets
             nfrequencies (int)              : number of frequencies to use in the Fourier basis
             dim1lims (Tuple[float, float])  : lower and upper bounds of the input space (min, max)
         """
@@ -437,7 +448,7 @@ class VFFGP(SparseGP, ABC):
 # Child classes for VFFGP
 class Matern12VFFGP(VFFGP):
     
-    """ VFF GP with Matern 1/2 kernel. """
+    """ VFFGP with Matern 1/2 kernel. """
 
     def __init__(self, 
                 X : torch.Tensor, 
@@ -521,7 +532,7 @@ class Matern12VFFGP(VFFGP):
 # Parent class for ASVGP
 class ASVGP(SparseGP, ABC):
 
-    """ ASVGP with Matern kernel for 1D regression """
+    """ Actually Sparse Variational Gaussian Process (ASVGP) """
 
     def __init__(self, 
                  X : torch.Tensor, 
@@ -553,14 +564,20 @@ class ASVGP(SparseGP, ABC):
 # Child classes for ASVGP
 class Matern12B1SplineASVGP(ASVGP):
 
-    """ ASVGP with B1-spline """
+    """ ASVGP with B1-spline bases and Matern 1/2 kernel. """
 
     def __init__(self, 
                 X : torch.Tensor, 
                 y : torch.Tensor, 
                 nknots : int, 
                 dim1lims : Tuple[float, float]) -> 'ASVGP':
-        """ Constructs a B1SplineASVGP """
+        """
+        Arguments:
+            train_x (torch.tensor)          : (n x 1) training inputs 
+            train_y (torch.tensor)          : (n x 1) training targets
+            nknots (int)                    : number of knots
+            dim1lims (Tuple[float, float])  : lower and upper bounds of the input space (min, max)
+        """
         super().__init__(X, y, nknots, dim1lims)
         self.basis = B1SplineBasis(self.mesh)
         self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1/2))
@@ -620,13 +637,20 @@ class Matern12B1SplineASVGP(ASVGP):
 # Parent class for GriddedGP
 class GriddedGP(SparseGP):
 
-    """ GriddedGP with Matern kernel for 1D regression """
+    """ GriddedGP """
 
     def __init__(self, 
                 X : torch.Tensor, 
                 y : torch.Tensor, 
                 nknots : int, 
                 dim1lims : Tuple[float, float]) -> 'GriddedGP':
+        """
+        Arguments:
+            train_x (torch.tensor)          : (n x 1) training inputs 
+            train_y (torch.tensor)          : (n x 1) training targets
+            nknots (int)                    : number of knots
+            dim1lims (Tuple[float, float])  : lower and upper bounds of the input space (min, max)
+        """
         super().__init__(X, y)
                 # parameters
         self.nknots = nknots
@@ -665,14 +689,19 @@ class GriddedGP(SparseGP):
 
 # Child classes for GriddedGP
 class Matern12B0SplineGriddedGP(GriddedGP):
-
     """ Gridded GP with Matern 1/2 kernel and B0 spline basis functions. """
     def __init__(self, 
             X : torch.Tensor, 
             y : torch.Tensor, 
             nknots : int, 
             dim1lims : Tuple[float, float]) -> 'GriddedGP':
-        """ Constructs a gridded GP with Matern 1/2 kernel and B0 spline basis functions. """
+        """
+        Arguments:
+            train_x (torch.tensor)          : (n x 1) training inputs 
+            train_y (torch.tensor)          : (n x 1) training targets
+            nknots (int)                    : number of knots
+            dim1lims (Tuple[float, float])  : lower and upper bounds of the input space (min, max)
+        """
         super().__init__(X, y, nknots, dim1lims)
         self.basis = B0SplineBasis(self.mesh)
         self.n_splines = self.basis.m
