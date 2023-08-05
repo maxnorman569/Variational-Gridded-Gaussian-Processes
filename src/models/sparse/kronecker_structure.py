@@ -675,7 +675,7 @@ class Matern12B1SplineASVGP(KroneckerStructure):
 #                                                                                                  #
 ####################################################################################################
 
-class GriddedGP(KroneckerStructure):
+class Matern12B0SplineGriddedGP(KroneckerStructure):
 
     """ VFFGP class for 2D data using Kronecker structure """
 
