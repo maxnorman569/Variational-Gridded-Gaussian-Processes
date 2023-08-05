@@ -6,13 +6,13 @@ from gpytorch.distributions import MultivariateNormal
 
 # Note: The bivariate case is no different to the univariate case, this file is only added for consistency between the exact and sparese modules
 
-class GP1D(gpytorch.models.ExactGP):
+class GP(gpytorch.models.ExactGP):
     """ Exact Gaussian Process Regression Model """
 
     def __init__(self, 
                  train_x : torch.Tensor, 
                  train_y : torch.Tensor,
-                 likelihood : gpytorch.likelihoods) -> 'GP1D':
+                 likelihood : gpytorch.likelihoods) -> 'GP':
         """
         Exact Gaussian Process Regression Model.
 
@@ -134,34 +134,34 @@ class GP1D(gpytorch.models.ExactGP):
         return f_pred
     
 
-class Matern12GP1D(GP1D):
+class Matern12GP(GP):
     """ Exact univariate Gaussian Process Regression Model with Matern 1/2 Kernel """
     def __init__(self, 
                  train_x: torch.Tensor, 
                  train_y: torch.Tensor,
-                 likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'Matern12GP1D':
+                 likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'GP':
         super().__init__(train_x, train_y, likelihood)
         self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 1/2))
         self.likelihood = likelihood
 
 
-class Matern32GP1D(GP1D):
+class Matern32GP(GP):
     """ Exact univariate Gaussian Process Regression Model with Matern 1/2 Kernel """
     def __init__(self, 
                  train_x: torch.Tensor, 
                  train_y: torch.Tensor,
-                 likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'Matern32GP1D':
+                 likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'GP':
         super().__init__(train_x, train_y, likelihood)
         self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 3/2))
         self.likelihood = likelihood
     
 
-class Matern52GP1D(GP1D):
+class Matern52GP(GP):
     """ Exact univariate Gaussian Process Regression Model with Matern 1/2 Kernel """
     def __init__(self, 
                  train_x: torch.Tensor, 
                  train_y: torch.Tensor, 
-                 likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'Matern32GP1D':
+                 likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'GP':
         super().__init__(train_x, train_y, likelihood)
         self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 5/2))
         self.likelihood = likelihood

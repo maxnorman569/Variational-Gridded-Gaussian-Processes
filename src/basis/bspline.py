@@ -74,40 +74,40 @@ class B1SplineBasis(SplineBasis):
         super().__init__(mesh)
         self.basis = [B1BasisFunction(m, self.mesh[m], self.mesh[m+1], self.mesh[m+2]) for m in range(self.m)]
 
-    # Computes the RKHS inner Product for the B-spline of order 1
-    # TODO: find a better place for this function
-    def rkhs_inner_product(self, 
-                            band : int,
-                            scalesigma : float, 
-                            lengthscale : float) -> torch.Tensor:
-        """ 
-        Returns the matrices involved in the RKHS inner product (EXCLUDING HYPERPARAMETERS)
-        Note: the hyperparemters featuer in the model methods _Kuu and _Kuf
+    # # Computes the RKHS inner Product for the B-spline of order 1
+    # # TODO: find a better place for this function
+    # def rkhs_inner_product(self, 
+    #                         band : int,
+    #                         scalesigma : float, 
+    #                         lengthscale : float) -> torch.Tensor:
+    #     """ 
+    #     Returns the matrices involved in the RKHS inner product (EXCLUDING HYPERPARAMETERS)
+    #     Note: the hyperparemters featuer in the model methods _Kuu and _Kuf
 
-        Arguments:
-            band : int, the band of the matrix to return (0 for main diagonal, 1 for first upper and lower diagonal)
+    #     Arguments:
+    #         band : int, the band of the matrix to return (0 for main diagonal, 1 for first upper and lower diagonal)
         
-        """
-        assert band in [0, 1], "band must be 0 or 1 for B-spline of order 1"
+    #     """
+    #     assert band in [0, 1], "band must be 0 or 1 for B-spline of order 1"
 
-        # compute inner products
-        if band == 0:
-            # compute integral terms
-            int1 = torch.ones(self.m) * (2. / self.delta)
-            int2 = torch.ones(self.m) * ((2. / 3.) * self.delta)
-            # boundary conditions
-            bound_cond = torch.zeros(self.m)
-            bound_cond[0] = 1.
-            bound_cond[-1] = 1.
-            # inner product
-            inner_prod = (int1 / (2. * scalesigma)) + (int2 / (2. * lengthscale * scalesigma)) + (bound_cond / (2. * scalesigma))
-            return torch.diag_embed(inner_prod.flatten(), offset=0)
-        else:
-            # compute integrals
-            int1 = torch.ones(self.m - 1) * (-1. / self.delta)
-            int2 = torch.ones(self.m - 1) * (self.delta / 6.)
-            # boundary conditions
-            # boundary conditions = 0!
-            # inner product
-            inner_prod = ((1. / (2. * scalesigma) ) * int1) + ((1 / (2. * lengthscale * scalesigma)) * int2)
-            return torch.diag_embed(inner_prod, offset=1) + torch.diag_embed(inner_prod, offset=-1)
+    #     # compute inner products
+    #     if band == 0:
+    #         # compute integral terms
+    #         int1 = torch.ones(self.m) * (2. / self.delta)
+    #         int2 = torch.ones(self.m) * ((2. / 3.) * self.delta)
+    #         # boundary conditions
+    #         bound_cond = torch.zeros(self.m)
+    #         bound_cond[0] = 1.
+    #         bound_cond[-1] = 1.
+    #         # inner product
+    #         inner_prod = (int1 / (2. * scalesigma)) + (int2 / (2. * lengthscale * scalesigma)) + (bound_cond / (2. * scalesigma))
+    #         return torch.diag_embed(inner_prod.flatten(), offset=0)
+    #     else:
+    #         # compute integrals
+    #         int1 = torch.ones(self.m - 1) * (-1. / self.delta)
+    #         int2 = torch.ones(self.m - 1) * (self.delta / 6.)
+    #         # boundary conditions
+    #         # boundary conditions = 0!
+    #         # inner product
+    #         inner_prod = ((1. / (2. * scalesigma) ) * int1) + ((1 / (2. * lengthscale * scalesigma)) * int2)
+    #         return torch.diag_embed(inner_prod, offset=1) + torch.diag_embed(inner_prod, offset=-1)
