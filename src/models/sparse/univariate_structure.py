@@ -399,7 +399,47 @@ class VFFGP(SparseGP, ABC):
             (torch.Tensor)          : spectral density
         """
         pass
+    
 
+# Child classes for VFFGP
+class Matern12VFFGP(VFFGP):
+    
+    """ VFFGP with Matern 1/2 kernel. """
+
+    def __init__(self, 
+                X : torch.Tensor, 
+                y : torch.Tensor, 
+                nfrequencies : int, 
+                dim1lims : Tuple[float, float]) -> 'VFFGP':
+        super().__init__(X, y, nfrequencies, dim1lims)
+        self.omegas = FourierBasisMatern12(self.nfrequencies, self.alim, self.blim, 1.).omegas
+        self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1/2))
+
+    def spectral_density(self, ) -> torch.Tensor:
+        """
+        Computes the spectra corersponding to the Matérn 1/2 covariances
+
+        Arguments:
+            omega (torch.Tensor)    : frequency
+            scalesigma (float)      : amplitude hyperparameter
+            lengthscale (float)     : lengthscale hyperparameter
+
+        Returns:
+            (torch.Tensor)          : spectral density
+        """
+        # omegas
+        omegas = self.omegas
+        # hyperparameters
+        scalesigma = self.kernel.outputscale
+        lengthscale = self.kernel.base_kernel.lengthscale
+        # get lamnda
+        lmbda = 1 / lengthscale.squeeze()
+        # compute spectral density
+        numerator = 2 * scalesigma * lmbda
+        denominator = (lmbda ** 2) + (omegas ** 2)
+        spectral_density = numerator / denominator
+        return spectral_density
+    
     def _alpha(self, omegas) -> torch.Tensor:
         """
         Computes alpha half of the Kuu representation for the Matérn 1/2 covarainces
@@ -435,52 +475,14 @@ class VFFGP(SparseGP, ABC):
         Returns:
             (torch.Tensor)          : beta
         """
-        scalesigma = self.kernel.outputscale
+        scalesigma = self.kernel.outputscale.sqrt()
         # compute the sigma half
-        sigma_half = torch.ones(len(omegas))/scalesigma
+        sigma_half = torch.ones(len(omegas)) / scalesigma
         # compute the zero half
         zero_half = torch.zeros(len(omegas) - 1)
         # compute beta
         beta = torch.cat((sigma_half, zero_half))
         return beta
-    
-
-# Child classes for VFFGP
-class Matern12VFFGP(VFFGP):
-    
-    """ VFFGP with Matern 1/2 kernel. """
-
-    def __init__(self, 
-                X : torch.Tensor, 
-                y : torch.Tensor, 
-                nfrequencies : int, 
-                dim1lims : Tuple[float, float]) -> 'VFFGP':
-        super().__init__(X, y, nfrequencies, dim1lims)
-        self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=1/2))
-
-    def spectral_density(self, ) -> torch.Tensor:
-        """
-        Computes the spectra corersponding to the Matérn 1/2 covariances
-
-        Arguments:
-            omega (torch.Tensor)    : frequency
-            scalesigma (float)      : amplitude hyperparameter
-            lengthscale (float)     : lengthscale hyperparameter
-
-        Returns:
-            (torch.Tensor)          : spectral density
-        """
-        basis = FourierBasisMatern12(self.nfrequencies, self.alim, self.blim, self.kernel.outputscale)
-        omegas = basis.omegas
-        scalesigma = self.kernel.outputscale
-        lengthscale = self.kernel.base_kernel.lengthscale
-        # get lamnda
-        lmbda = 1 / lengthscale
-        # compute spectral density
-        numerator = 2 * (scalesigma ** 2) * lmbda
-        denominator = (lmbda ** 2) + (omegas ** 2)
-        spectral_density = numerator / denominator
-        return spectral_density
     
     def _Kuu(self,) -> torch.Tensor:
         """
@@ -496,15 +498,10 @@ class Matern12VFFGP(VFFGP):
         Returns:
             (torch.Tensor)          : Kuu
         """
-        basis = FourierBasisMatern12(self.nfrequencies, self.alim, self.blim, self.kernel.base_kernel.lengthscale)
-        omegas = basis.omegas
-        # compute the alphas
-        alphas = self._alpha(omegas)
-        # compute the betas
-        betas = self._beta(omegas)
-        # compute Kuu
-        Kuu = torch.diag(alphas) + torch.outer(betas, betas)
-        return Kuu
+        # compute alpha and beta
+        alpha = self._alpha(self.omegas)
+        beta = self._beta(self.omegas).unsqueeze(-1)
+        return operators.DiagLinearOperator(alpha).add_low_rank(beta).to_dense().to(torch.float64) # TODO: this is also wrong, shouldn't have to cast!
     
     def _Kuf(self, 
                     x : float,) -> torch.Tensor:
@@ -518,7 +515,8 @@ class Matern12VFFGP(VFFGP):
         Returns:
             (torch.Tensor)                  : cross-covariance
         """
-        basis = FourierBasisMatern12(self.nfrequencies, self.alim, self.blim, self.kernel.outputscale)
+        lengthscale = self.kernel.base_kernel.lengthscale.squeeze()
+        basis = FourierBasisMatern12(self.nfrequencies, self.alim, self.blim, lengthscale)
         return basis(x).to(torch.float64) # TODO: this is wrong, should return a float64 tensor (shouldntt bave to cast here)
     
     
