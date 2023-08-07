@@ -91,7 +91,7 @@ class SplineBasis:
 
     def __call__(self, x : torch.Tensor) -> torch.Tensor:
         """ Evaluates the B-spline of order 1 at x """
-        return torch.vstack([self.basis[m](x) for m in range(self.m)])
+        return torch.vstack([self.basis_functions[m](x) for m in range(len(self.basis_functions))])
 
 
 class B0SplineBasis(SplineBasis):
