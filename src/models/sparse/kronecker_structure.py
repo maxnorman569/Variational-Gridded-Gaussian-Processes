@@ -4,7 +4,7 @@ import torch
 import gpytorch
 # basis imports
 from src.basis.fourier import FourierBasis, FourierBasisMatern12
-from src.basis.bspline import B0SplineBasis,B1SplineBasis
+from src.basis.bspline import SplineBasis, B0SplineBasis,B1SplineBasis
 # misc imports
 import linear_operator.operators as operators
 from abc import ABC, abstractmethod
@@ -367,9 +367,12 @@ class Matern12VFFGP(KroneckerStructure):
         self.nfrequencies = nfrequencies
         self.dim1lims = dim1lims
         self.dim2lims = dim2lims
+        # register omegas
+        self.omegas_1 = FourierBasisMatern12(self.nfrequencies, self.dim1lims[0], self.dim1lims[1], 1.).omegas
+        self.omegas_2 = FourierBasisMatern12(self.nfrequencies, self.dim2lims[0], self.dim2lims[1], 1.).omegas
 
     def spectral_density(self, 
-                         dimbasis : FourierBasis,
+                         dimomegas : FourierBasis,
                          dimkernel : gpytorch.kernels,) -> torch.Tensor:
         """
         Computes the spectra corersponding to the Matérn 1/2 covariances
@@ -381,19 +384,22 @@ class Matern12VFFGP(KroneckerStructure):
         Returns:
             (torch.Tensor)                  : spectral density
         """
-        scalesigma = dimkernel.outputscale.sqrt()
-        lengthscale = dimkernel.base_kernel.lengthscale[0]
-        omegas = dimbasis.omegas
+        # omegas
+        omegas = dimomegas
+        # hyperparameters
+        scalesigma = dimkernel.outputscale
+        lengthscale = dimkernel.base_kernel.lengthscale
         # get lamnda
-        lmbda = 1 / lengthscale
+        lmbda = 1 / lengthscale.squeeze()
         # compute spectral density
-        numerator = 2 * (scalesigma ** 2) * lmbda
+        numerator = 2 * scalesigma * lmbda
         denominator = (lmbda ** 2) + (omegas ** 2)
         spectral_density = numerator / denominator
         return spectral_density
     
     def _alpha(self, 
-            dimbasis : FourierBasis,
+            dimlims : Tuple[float, float],
+            dimomegas : FourierBasis,
             dimkernel : gpytorch.kernels,) -> torch.Tensor:
         """
         Computes alpha half of the Kuu representation for the Matérn 1/2 covarainces
@@ -405,19 +411,18 @@ class Matern12VFFGP(KroneckerStructure):
         Returns:
             (torch.Tensor)          : alpha
         """
-        a = dimbasis.a
-        b = dimbasis.b
-        omegas = dimbasis.omegas
+        a, b = dimlims
+        omegas = dimomegas
         # check that omegas[0] = 0
         assert omegas[0] == 0, "The first element of omegas must be 0"
         # compute the inverse spectral density
-        S_inv = 1 / self.spectral_density(dimbasis, dimkernel)
+        S_inv = 1 / self.spectral_density(dimomegas, dimkernel)
         # compute the alpha half
         alpha = ((b - a) / 2) * torch.cat([2 * S_inv[0][None], S_inv[1:], S_inv[1:]])
         return alpha
     
     def _beta(self, 
-            dimbasis : FourierBasis,
+            dimomegas : FourierBasis,
             dimkernel : gpytorch.kernels,) -> torch.Tensor:
         """
         Computes the beta half of the Kuu representation for the Matérn 1/2 covarainces
@@ -430,17 +435,17 @@ class Matern12VFFGP(KroneckerStructure):
             (torch.Tensor)                  : beta
         """
         scalesigma = dimkernel.outputscale.sqrt()
-        omegas = dimbasis.omegas
         # compute the sigma half
-        sigma_half = torch.ones(len(omegas))/scalesigma
+        sigma_half = torch.ones(len(dimomegas)) / scalesigma
         # compute the zero half
-        zero_half = torch.zeros(len(omegas) - 1)
+        zero_half = torch.zeros(len(dimomegas) - 1)
         # compute beta
         beta = torch.cat((sigma_half, zero_half))
         return beta
     
     def _Kuu_along_dim(self,
-            dimbasis : FourierBasis,
+            dimlims : Tuple[float, float],
+            dimomegas : FourierBasis,
             dimkernel : gpytorch.kernels,) -> torch.Tensor:
         """
         Computes the Kuu matrix for the Matérn 1/2 covarainces along a dimension 
@@ -452,16 +457,13 @@ class Matern12VFFGP(KroneckerStructure):
         Returns:
             (torch.Tensor)                  : Kuu
         """
-        # compute the alphas
-        alphas = self._alpha(dimbasis, dimkernel)
-        # compute the betas
-        betas = self._beta(dimbasis, dimkernel)
-        # compute Kuu
-        Kuu = torch.diag(alphas) + torch.outer(betas, betas)
-        return Kuu
+        alpha = self._alpha(dimlims, dimomegas, dimkernel)
+        beta = self._beta(dimomegas, dimkernel).unsqueeze(-1)
+        return operators.DiagLinearOperator(alpha).add_low_rank(beta).to_dense().to(torch.float64) # TODO: this is also wrong, shouldn't have to cast!
     
     def _Kuf_along_dim(self, 
-                    dimbasis : FourierBasis,
+                    dimlims : Tuple[float, float],
+                    dimkernel : FourierBasis,
                     x : float,) -> torch.Tensor:
         """ 
         Computes the Kuf matrix for the Matérn 1/2 covarainces along a dimension
@@ -473,7 +475,10 @@ class Matern12VFFGP(KroneckerStructure):
         Returns:
             (torch.Tensor)                  : Kuf
         """
-        return dimbasis(x).to(torch.float64) # TODO: this is wrong, should return a float64 tensor (shouldntt bave to cast here)
+        a, b = dimlims
+        lengthscale = dimkernel.base_kernel.lengthscale.squeeze()
+        basis = FourierBasisMatern12(self.nfrequencies, a, b, lengthscale)
+        return basis(x).to(torch.float64) # TODO: this is wrong, should return a float64 tensor (shouldntt bave to cast here)
     
     def _Kuu(self,) -> torch.Tensor:
         """ 
@@ -486,17 +491,9 @@ class Matern12VFFGP(KroneckerStructure):
         Returns:
             Kuu (torch.tensor)  : m x m matrix of inducing feature covariances
         """
-        # hyperparemters
-        lengthscale_x1 = self.kernel_1.base_kernel.lengthscale[0]
-        lengthscale_x2 = self.kernel_2.base_kernel.lengthscale[0]
-        # basis
-        basis_x1 = FourierBasisMatern12(self.nfrequencies, self.dim1lims[0], self.dim1lims[1], lengthscale_x1)
-        basis_x2 = FourierBasisMatern12(self.nfrequencies, self.dim2lims[0], self.dim2lims[1], lengthscale_x2)
-        # compute Kuu for each dimension
-        Kuu_x1 = self._Kuu_along_dim(basis_x1, self.kernel_1)
-        Kuu_x2 = self._Kuu_along_dim(basis_x2, self.kernel_2)
-        # compute the kronecker product
-        Kuu = torch.kron(Kuu_x1, Kuu_x2)
+        Kuu_1 =  self._Kuu_along_dim(self.dim1lims, self.omegas_1, self.kernel_1)
+        Kuu_2 =  self._Kuu_along_dim(self.dim2lims, self.omegas_2, self.kernel_2)
+        Kuu = torch.kron(Kuu_1, Kuu_2)
         return Kuu
     
     def _Kuf(self, 
@@ -511,15 +508,8 @@ class Matern12VFFGP(KroneckerStructure):
         Returns:
             Kuf (torch.tensor)  : m x n matrix of inducing feature covariances
         """
-        # hyperparemters
-        lengthscale_x1 = self.kernel_1.base_kernel.lengthscale[0]
-        lengthscale_x2 = self.kernel_2.base_kernel.lengthscale[0]
-        # basis
-        basis_x1 = FourierBasisMatern12(self.nfrequencies, self.dim1lims[0], self.dim1lims[1], lengthscale_x1)
-        basis_x2 = FourierBasisMatern12(self.nfrequencies, self.dim2lims[0], self.dim2lims[1], lengthscale_x2)
-        # compute Kuf
-        Kuf_1 = self._Kuf_along_dim(basis_x1, x[:, 0])
-        Kuf_2 = self._Kuf_along_dim(basis_x2, x[:, 1])
+        Kuf_1 = self._Kuf_along_dim(self.dim1lims, self.kernel_1, x[:, 0])
+        Kuf_2 = self._Kuf_along_dim(self.dim2lims, self.kernel_2, x[:, 1])
         Kuf = torch.stack([k1 * k2 for k2 in Kuf_1 for k1 in Kuf_2], dim = 0)
         return Kuf
 
@@ -563,42 +553,34 @@ class Matern12B1SplineASVGP(KroneckerStructure):
         self.basis_1 = B1SplineBasis(self.mesh_1)
         self.basis_2 = B1SplineBasis(self.mesh_2)
 
-    def rkhs_inner_product(self, 
-                        dimbasis : FourierBasis,
-                        dimkernel : gpytorch.kernels,
-                        band: int) -> torch.Tensor:
-        """ 
-        Computes the RKHS inner product for a B-spline basis of order 1 (i.e along a dimension)
+    def rkhs_inner_product(self,):
+        print('depreciated')
+        return None
+    
+    def compute_l2_inner_product(self, 
+                                 dimbasis : SplineBasis) -> torch.tensor:
+        """ """
+        m = dimbasis.n_basis_functions
+        delta = dimbasis.delta
+        first_row = torch.nn.functional.pad(torch.as_tensor([2 / 3 * delta, 1 / 6 * delta]), (0, m - 2))
+        boundary_correction = -torch.as_tensor([1 / 3 * delta, *[0.] * (m - 2), 1 / 3 * delta])
+        return operators.ToeplitzLinearOperator(first_row).add_diagonal(boundary_correction).to_dense()
 
-        Arguments:
-            band : int, the band of the matrix to return (0 for main diagonal, 1 for first upper and lower diagonal) 
-        """
-        # assert band is 0 or 1 for B1-spline
-        assert band in [0, 1], "band must be 0 or 1 for B-spline of order 1"
-        # get hyperparameters
-        scalesigma = dimkernel.outputscale
-        lengthscale = dimkernel.base_kernel.lengthscale[0]
-        # compute inner products
-        if band == 0:
-            # compute integral terms
-            int1 = torch.ones(dimbasis.m) * (2. / self.delta)
-            int2 = torch.ones(dimbasis.m) * ((2. / 3.) * self.delta)
-            # boundary conditions
-            bound_cond = torch.zeros(dimbasis.m)
-            bound_cond[0] = 1.
-            bound_cond[-1] = 1.
-            # inner product
-            inner_prod = (int1 / (2. * scalesigma)) + (int2 / (2. * lengthscale * scalesigma)) + (bound_cond / (2. * scalesigma))
-            return torch.diag_embed(inner_prod.flatten(), offset=0)
-        else:
-            # compute integrals
-            int1 = torch.ones(dimbasis.m - 1) * (-1. / self.delta)
-            int2 = torch.ones(dimbasis.m - 1) * (self.delta / 6.)
-            # boundary conditions
-            # boundary conditions = 0!
-            # inner product
-            inner_prod = ((1. / (2. * scalesigma) ) * int1) + ((1 / (2. * lengthscale * scalesigma)) * int2)
-            return torch.diag_embed(inner_prod, offset=1) + torch.diag_embed(inner_prod, offset=-1)
+    def compute_l2_grad_inner_product(self,
+                                      dimbasis : SplineBasis) -> torch.tensor:
+        """"""
+        m = dimbasis.n_basis_functions
+        delta = dimbasis.delta
+        first_row = torch.nn.functional.pad(torch.as_tensor([2 / delta, -1 / delta]), (0, m - 2))
+        boundary_correction = -torch.as_tensor([1 / delta, *[0.] * (m - 2), 1 / delta])
+        return operators.ToeplitzLinearOperator(first_row).add_diagonal(boundary_correction).to_dense()
+
+    def compute_boundary_condition(self,
+                                    dimbasis : SplineBasis) -> torch.tensor:
+        m = dimbasis.n_basis_functions
+        boundary_correction = torch.zeros(m)
+        boundary_correction[[0, -1]] = 1.
+        return operators.DiagLinearOperator(boundary_correction).to_dense()
         
     def _Kuu_along_dim(self,
                     dimbasis : FourierBasis,
@@ -613,12 +595,23 @@ class Matern12B1SplineASVGP(KroneckerStructure):
         Returns:
             (torch.Tensor)                  : Kuu matrix for the dimension
         """
-         # inner products
-        phi_mm = self.rkhs_inner_product(dimbasis, dimkernel, band=0)
-        phi_mmp1 = self.rkhs_inner_product(dimbasis, dimkernel, band=1)
-        # make banded matrix
-        Kuu = phi_mm + phi_mmp1
-        return Kuu
+        #  # inner products
+        # phi_mm = self.rkhs_inner_product(dimbasis, dimkernel, band=0)
+        # phi_mmp1 = self.rkhs_inner_product(dimbasis, dimkernel, band=1)
+        # # make banded matrix
+        # Kuu = phi_mm + phi_mmp1
+        # get hyperparameters
+        scalesigma = dimkernel.outputscale
+        lengthscale = dimkernel.base_kernel.lengthscale.squeeze()
+        # compute matrices
+        A = self.compute_l2_inner_product(dimbasis)
+        B = self.compute_l2_grad_inner_product(dimbasis)
+        BC = self.compute_boundary_condition(dimbasis)
+        return (
+                    A.mul(lengthscale) +
+                    B.mul(1 / lengthscale) +
+                    BC
+            ).mul(1 / (2 * scalesigma))
     
     def _Kuf_along_dim(self,
                     dimbasis : FourierBasis,
@@ -649,7 +642,7 @@ class Matern12B1SplineASVGP(KroneckerStructure):
         Kuu_2 = self._Kuu_along_dim(self.basis_2, self.kernel_2)
         # compute the kronecker product
         Kuu = torch.kron(Kuu_1, Kuu_2)
-        return Kuu
+        return Kuu.to(torch.float64) # TODO: fix this hacky fix
 
     def _Kuf(self, 
              x : torch.Tensor) -> torch.Tensor:
@@ -666,7 +659,7 @@ class Matern12B1SplineASVGP(KroneckerStructure):
         Kuf_1 = self._Kuf_along_dim(self.basis_1, x[:, 0])
         Kuf_2 = self._Kuf_along_dim(self.basis_2, x[:, 1])
         Kuf = torch.stack([k1 * k2 for k2 in Kuf_1 for k1 in Kuf_2], dim = 0)
-        return Kuf
+        return Kuf.to(torch.float64) # TODO: fix this hacky fix
 
 
 ####################################################################################################
