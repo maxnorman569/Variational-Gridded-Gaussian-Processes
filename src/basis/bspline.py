@@ -40,6 +40,41 @@ class B1BasisFunction:
         B0 = torch.logical_and(x >= self.vm, x <= self.vm1) * 1
         B1 = torch.logical_and(x > self.vm1, x <= self.vm2) * 1
         return ((x - self.vm) / (self.vm1 - self.vm)) * B0 + ((self.vm2 - x) / (self.vm2 - self.vm1)) * B1
+    
+
+class B1LeftHalfBasisFunction: 
+    """ Left half B0,1(x) basis functions for B-spline of order 1 """
+    def __init__(self, 
+                 m : int,
+                 v0 : float, 
+                 v1 : float,) -> 'B1BasisFunction':
+        """ Constructs the left half B0,1(x) basis functions for a B-spline of order 1 """
+        self.m = 0
+        self.v0 = v0
+        self.v1 = v1
+        self.delta = v1 - v0
+
+    def __call__(self, x : torch.Tensor) -> torch.Tensor:
+        """ Evaluates the left half B0,1(x) basis functions at x according to the Cox-de Boor recursion """
+        B1 = torch.logical_and(x >= self.v0, x < self.v1) * 1
+        return ((self.v1 - x) / (self.v1 - self.v0)) * B1
+    
+
+class B1RightHalfBasisFunction:
+    """ Right half BM,1(x) basis functions for B-spline of order 1 (M being the last basis function) """
+    def __init__(self, 
+                 m : int,
+                 vm : float, 
+                 vm1 : float,) -> 'B1BasisFunction':
+        """ Constructs the right half BM,1(x) basis functions for a B-spline of order 1 """
+        self.m = m
+        self.vm = vm
+        self.vm1 = vm1
+    
+    def __call__(self, x : torch.Tensor) -> torch.Tensor:
+        """ Evaluates the Bm,1(x) basis functions at x according to the Cox-de Boor recursion """
+        B0 = torch.logical_and(x >= self.vm, x <= self.vm1) * 1
+        return ((x - self.vm) / (self.vm1 - self.vm)) * B0
 
 
 # - B-SPLINE BASIS - #
@@ -59,12 +94,13 @@ class SplineBasis:
         return torch.vstack([self.basis[m](x) for m in range(self.m)])
 
 
-class B0SplineBasis(SplineBasis):
-    """ B-spline of order 0 """
-    def __init__(self, mesh : torch.Tensor) -> SplineBasis:
-        self.order = 0
+class B1SplineBasis(SplineBasis):
+    """ B-spline of order 1 """
+    def __init__(self, mesh : torch.Tensor) -> 'B1SplineBasis':
+        self.order = 1
         super().__init__(mesh)
-        self.basis = [B0BasisFunction(m, self.mesh[m], self.mesh[m+1]) for m in range(self.m)]
+        self.basis_functions = [B1LeftHalfBasisFunction(0, self.mesh[0], self.mesh[1])] + [B1BasisFunction(m+1, self.mesh[m], self.mesh[m+1], self.mesh[m+2]) for m in range(0, self.m)] + [B1RightHalfBasisFunction(self.m+2, self.mesh[-2], self.mesh[-1])]
+        self.n_basis_functions = len(self.basis_functions)
 
 
 class B1SplineBasis(SplineBasis):
