@@ -94,6 +94,14 @@ class SplineBasis:
         return torch.vstack([self.basis[m](x) for m in range(self.m)])
 
 
+class B0SplineBasis(SplineBasis):
+    """ B-spline of order 0 """
+    def __init__(self, mesh : torch.Tensor) -> SplineBasis:
+        self.order = 0
+        super().__init__(mesh)
+        self.basis = [B0BasisFunction(m, self.mesh[m], self.mesh[m+1]) for m in range(self.m)]
+
+
 class B1SplineBasis(SplineBasis):
     """ B-spline of order 1 """
     def __init__(self, mesh : torch.Tensor) -> 'B1SplineBasis':
@@ -101,14 +109,6 @@ class B1SplineBasis(SplineBasis):
         super().__init__(mesh)
         self.basis_functions = [B1LeftHalfBasisFunction(0, self.mesh[0], self.mesh[1])] + [B1BasisFunction(m+1, self.mesh[m], self.mesh[m+1], self.mesh[m+2]) for m in range(0, self.m)] + [B1RightHalfBasisFunction(self.m+2, self.mesh[-2], self.mesh[-1])]
         self.n_basis_functions = len(self.basis_functions)
-
-
-class B1SplineBasis(SplineBasis):
-    """ B-spline of order 1 """
-    def __init__(self, mesh : torch.Tensor) -> 'B1SplineBasis':
-        self.order = 1
-        super().__init__(mesh)
-        self.basis = [B1BasisFunction(m, self.mesh[m], self.mesh[m+1], self.mesh[m+2]) for m in range(self.m)]
 
     # # Computes the RKHS inner Product for the B-spline of order 1
     # # TODO: find a better place for this function
