@@ -594,38 +594,70 @@ class Matern12B1SplineASVGP(ASVGP):
         # get hyperparameters
         scalesigma = self.kernel.outputscale
         lengthscale = self.kernel.base_kernel.lengthscale[0]
+        n_basis_functions = self.basis.n_basis_functions
         # compute inner products
         if band == 0:
             # compute integral terms
-            int1 = torch.ones(self.basis.m) * (2. / self.delta)
-            int2 = torch.ones(self.basis.m) * ((2. / 3.) * self.delta)
+            int1 = torch.ones(n_basis_functions) * (2. / self.delta)
+            int2 = torch.ones(n_basis_functions) * ((2. / 3.) * self.delta)
             # boundary conditions
-            bound_cond = torch.zeros(self.basis.m)
-            bound_cond[0] = 1.
-            bound_cond[-1] = 1.
+            bound_cond = (self.basis(self.alim) ** 2).flatten() + (self.basis(self.blim) ** 2).flatten()
             # inner product
             inner_prod = (int1 / (2. * scalesigma)) + (int2 / (2. * lengthscale * scalesigma)) + (bound_cond / (2. * scalesigma))
             return torch.diag_embed(inner_prod.flatten(), offset=0)
         else:
             # compute integrals
-            int1 = torch.ones(self.basis.m - 1) * (-1. / self.delta)
-            int2 = torch.ones(self.basis.m - 1) * (self.delta / 6.)
+            int1 = torch.ones(n_basis_functions - 1)  / -self.delta
+            int2 = torch.ones(n_basis_functions - 1) * (self.delta / 6.)
             # boundary conditions
             # boundary conditions = 0!
             # inner product
-            inner_prod = ((1. / (2. * scalesigma) ) * int1) + ((1 / (2. * lengthscale * scalesigma)) * int2)
+            inner_prod = (int1 / (2. * scalesigma)) + (int2 / (2. * lengthscale * scalesigma))
             return torch.diag_embed(inner_prod, offset=1) + torch.diag_embed(inner_prod, offset=-1)
+        
+    def compute_l2_inner_product(self):
+        m = self.basis.n_basis_functions
+        delta = self.basis.delta
+        first_row = torch.nn.functional.pad(torch.as_tensor([2 / 3 * delta, 1 / 6 * delta]), (0, m - 2))
+        boundary_correction = -torch.as_tensor([1 / 3 * delta, *[0.] * (m - 2), 1 / 3 * delta])
+        return operators.ToeplitzLinearOperator(first_row).add_diagonal(boundary_correction)
+
+    def compute_l2_grad_inner_product(self):
+        m = self.basis.n_basis_functions
+        delta = self.basis.delta
+        first_row = torch.nn.functional.pad(torch.as_tensor([2 / delta, -1 / delta]), (0, m - 2))
+        boundary_correction = -torch.as_tensor([1 / delta, *[0.] * (m - 2), 1 / delta])
+
+        return operators.ToeplitzLinearOperator(first_row).add_diagonal(boundary_correction)
+
+    def compute_boundary_condition(self):
+        m = self.basis.n_basis_functions
+        boundary_correction = torch.zeros(m)
+        boundary_correction[[0, -1]] = 1.
+        return operators.DiagLinearOperator(boundary_correction)
         
     def _Kuf(self, x) -> torch.Tensor:
         return self.basis(x)
 
     def _Kuu(self,) -> torch.Tensor:
-        # inner products
-        phi_mm = self.rkhs_inner_product(band=0)
-        phi_mmp1 = self.rkhs_inner_product(band=1)
-        # make banded matrix
-        Kuu = phi_mm + phi_mmp1
-        return Kuu
+        # # inner products
+        # phi_mm = self.rkhs_inner_product(band=0)
+        # phi_mmp1 = self.rkhs_inner_product(band=1)
+        # # make banded matrix
+        # Kuu = phi_mm + phi_mmp1
+
+        # get hyperparameters
+        scalesigma = self.kernel.outputscale
+        lengthscale = self.kernel.base_kernel.lengthscale[0]
+        # compute matrices
+        A = self.compute_l2_inner_product()
+        B = self.compute_l2_grad_inner_product()
+        BC = self.compute_boundary_condition()
+        return (
+                    A.mul(lengthscale) +
+                    B.mul(1 / lengthscale) +
+                    BC
+            ).mul(1 / (2 * scalesigma))
     
 
 ####################################################################################################
