@@ -99,7 +99,8 @@ class B0SplineBasis(SplineBasis):
     def __init__(self, mesh : torch.Tensor) -> SplineBasis:
         self.order = 0
         super().__init__(mesh)
-        self.basis = [B0BasisFunction(m, self.mesh[m], self.mesh[m+1]) for m in range(self.m)]
+        self.basis_functions = [B0BasisFunction(m, self.mesh[m], self.mesh[m+1]) for m in range(self.m)]
+        self.n_basis_functions = len(self.basis_functions)
 
 
 class B1SplineBasis(SplineBasis):
