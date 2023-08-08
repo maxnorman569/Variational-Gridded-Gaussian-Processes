@@ -141,7 +141,9 @@ class Matern12GP(GP):
                  train_y: torch.Tensor,
                  likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'GP':
         super().__init__(train_x, train_y, likelihood)
-        self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 1/2))
+        self.kernel_1 = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 1/2), active_dims=[0])
+        self.kernel_2 = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 1/2), active_dims=[1])
+        self.kernel = self.kernel_1 * self.kernel_2
         self.likelihood = likelihood
 
 
@@ -152,7 +154,9 @@ class Matern32GP(GP):
                  train_y: torch.Tensor,
                  likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'GP':
         super().__init__(train_x, train_y, likelihood)
-        self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 3/2))
+        self.kernel_1 = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 3/2), active_dims=[0])
+        self.kernel_2 = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 3/2), active_dims=[1])
+        self.kernel = self.kernel_1 * self.kernel_2
         self.likelihood = likelihood
     
 
@@ -163,5 +167,7 @@ class Matern52GP(GP):
                  train_y: torch.Tensor, 
                  likelihood = gpytorch.likelihoods.GaussianLikelihood()) -> 'GP':
         super().__init__(train_x, train_y, likelihood)
-        self.kernel = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 5/2))
+        self.kernel_1 = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 5/2), active_dims=[0])
+        self.kernel_2 = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu = 5/2), active_dims=[1])
+        self.kernel = self.kernel_1 * self.kernel_2
         self.likelihood = likelihood
