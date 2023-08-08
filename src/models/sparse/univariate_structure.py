@@ -810,7 +810,7 @@ class Matern12B0SplineGriddedGP(GriddedGP):
         m = self.n_splines
         delta = self.delta
         scalesigma = self.kernel.outputscale
-        lengthscale = self.kernel.base_kernel.lengthscale[0]
+        lengthscale = self.kernel.base_kernel.lengthscale.squeeze()
         k = torch.arange(m)
         # compute first row of Kuu 
         first_row = (
