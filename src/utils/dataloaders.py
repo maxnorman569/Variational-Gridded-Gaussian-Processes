@@ -2,9 +2,12 @@
 import numpy as np
 # data imports
 import xarray as xr
+# integration imports
+from scipy.integrate import simpson
 # misc imports
 import os
 from typing import List, Tuple
+from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 
 
@@ -372,3 +375,165 @@ class SimulationDataHour(SimulationData):
             return track_lon, track_lat, track_ssh
         else:
             return track_lon[::observation_sparisty], track_lat[::observation_sparisty], track_ssh[::observation_sparisty]
+        
+
+
+class GulfStreamData: 
+
+    """ 
+    This class is used to load the observation simulation data from a specified satallite 
+    
+    Available Satellites: ['envisat', 'geosat2', 'jason1', 'karin_swot', 'nadir_swot', 'topex-poseidon_interleaved']
+    """ 
+
+    def __init__(self,
+                obs_root_folder : str,
+                ref_root_folder : str,
+                satellite_name : str,
+                year_frame : Tuple[str, str],
+                month_frame : Tuple[str, str],
+                day_frame : Tuple[str, str],
+                hour_frame : Tuple[str, str],):
+        """ 
+        Arguments:
+            obs_root_folder (str)           : The root folder ('dc_obs') where the observation data is stored
+            ref_root_folder (str)           : The root folder ('dc_ref') where the reference data is stored
+            statellite_names (List[str])    : The name of the satellites to load the data frame
+            year_frame (Tuple[str, str])    : The year range to load data from (min 'YYYY', max 'YYYY')
+            month_frame (Tuple[str, str])   : The month range to load data from (min 'MM', max 'MM')
+            day_frame (Tuple[str, str])     : The day range to load data from (min 'DD', max 'DD')
+            hour_frame (Tuple[str, str])    : The hour range to load data from (min 'HH:MM:SS', max 'HH:MM:SS')
+        """
+        # SATELLITE NAMES
+        self.satellite_names = satellite_name
+        available_satellites = ['envisat', 'geosat2', 'jason1', 'karin_swot', 'nadir_swot', 'topex-poseidon_interleaved']
+        if not set([satellite_name]).issubset(set(available_satellites)):
+            raise ValueError("Invalid satellite name provided. Satellite names must be in: {}".format(available_satellites))
+        # FILE PATHS
+        self.ref_root_folder = ref_root_folder
+        assert os.path.exists(self.ref_root_folder), "The reference root folder does not exist: {}".format(self.ref_root_folder)
+        self.obs_root_folder = obs_root_folder
+        assert os.path.exists(self.obs_root_folder), "The observation root folder does not exist: {}".format(self.obs_root_folder)
+        self.obs_file_path = os.path.join(obs_root_folder, f'2020a_SSH_mapping_NATL60_{satellite_name}.nc')
+        assert os.path.exists(self.obs_file_path), "The observation file path does not exist: {}".format(self.obs_file_path)
+        # META
+        self.year_frame = year_frame
+        self.month_frame = month_frame
+        self.day_frame = day_frame
+        self.hour_frame = hour_frame
+        # DATA
+        self.obs_data = self._load_obs_data()
+        self.ref_data = self._load_ref_data()
+
+    def _load_obs_data(self,) -> xr.Dataset:
+        """ loads the observation data for the specified satellite between the given time frame into an xarray dataset """
+        # get the start and end data in 'YYYY-MM-DD HH:MM:SS' format
+        iso_start_date = '-'.join([self.year_frame[0], self.month_frame[0], self.day_frame[0]]) + ' ' + self.hour_frame[0]
+        iso_end_date = '-'.join([self.year_frame[1], self.month_frame[1], self.day_frame[1]]) + ' ' + self.hour_frame[1]
+        # load the data sliced by the time frame
+        ds = xr.open_dataset(self.obs_file_path).sel(time = slice(iso_start_date, iso_end_date))
+        return ds
+    
+    def _load_ref_data(self,) -> xr.Dataset:
+        """ loads the referece data for the specified satellite between the given time frame into an xarray dataset """
+        # get the satart and end data in 'YYYY-MM-DD' format
+        iso_start_date_str = '-'.join([self.year_frame[0], self.month_frame[0], self.day_frame[0]])
+        iso_end_date_str = '-'.join([self.year_frame[1], self.month_frame[1], self.day_frame[1]])
+        # Convert the start and end date strings to datetime objects
+        iso_start_date = datetime.strptime(iso_start_date_str, '%Y-%m-%d')
+        iso_end_date = datetime.strptime(iso_end_date_str, '%Y-%m-%d')
+        # Calculate the range of dates between the start and end dates
+        date_range = [iso_start_date + timedelta(days=x) for x in range((iso_end_date - iso_start_date).days + 1)]
+        # Convert the datetime objects back to 'YYYY-MM-DD' formatted strings
+        iso_dates_str = [date.strftime('%Y-%m-%d') for date in date_range]
+        # get the file paths for the reference data
+        ref_file_names = ['NATL60-CJM165_GULFSTREAM_y{year}m{month}d{day}.1h_SSH.nc'.format(year = date[0:4], month = date[5:7], day = date[8:10]) for date in iso_dates_str]
+        ref_file_paths = [os.path.join(self.ref_root_folder, file_name) for file_name in ref_file_names]
+        # mask the files that exist
+        file_mask = [os.path.exists(file_path) for file_path in ref_file_paths]
+        # remove the file paths that do not exist
+        ref_file_paths = [file_path for file_path, mask in zip(ref_file_paths, file_mask) if mask]
+        # load the data
+        ds = xr.open_mfdataset(ref_file_paths, combine = 'by_coords')
+        # average the data over time
+        return ds
+    
+    def grid_ref_data_average(self, 
+                              n_grids : int) -> np.ndarray:
+        """ 
+        grids the reference data (averaged across time) by averaging the data in each grid cell  
+        
+        Arguments:
+            n_grids (int)   : The number of grid cells to split the data into (e.g. 1 grid cell = 600x600, 4 grid cells = 300x300)
+
+        Returns:
+            np.ndarray      : The gridded reference data (n_grids x n_grids)
+        """
+        # no. of point / grid cell
+        N_SPLINES = n_grids
+        N_POINTS = int(600 / n_grids)
+        # average dataset over time
+        ds_mean = self.ref_data.mean(dim='time')
+        # compute the averages
+        averages = []
+        for i in range(N_SPLINES):
+            for j in range(N_SPLINES):
+                avg = ds_mean.sossheig.values[i*N_POINTS:(i+1)*N_POINTS, j*N_POINTS:(j+1)*N_POINTS].flatten().mean()
+                averages.append(avg)
+        return np.array(averages).reshape(N_SPLINES, N_SPLINES)
+    
+    def grid_ref_data_trapz(self, 
+                              n_grids : int) -> np.ndarray:
+        """ 
+        grids the reference data (averaged across time) by numerically integrating the data in each grid cell by the trapezoidal rule
+        
+        Arguments:
+            n_grids (int)   : The number of grid cells to split the data into (e.g. 1 grid cell = 600x600, 4 grid cells = 300x300)
+
+        Returns:
+            np.ndarray      : The gridded reference data (n_grids x n_grids)
+        """
+        # no. of point / grid cell
+        N_SPLINES = n_grids
+        N_POINTS = int(600 / n_grids)
+        # average dataset over time
+        ds_mean = self.ref_data.mean(dim='time')
+        # compute the integrals
+        integrals = []
+        for i in range(N_SPLINES):
+            for j in range(N_SPLINES):
+                # get values
+                lon_vals = ds_mean.lon.values[i*N_POINTS:(i+1)*N_POINTS]
+                lat_vals = ds_mean.lat.values[j*N_POINTS:(j+1)*N_POINTS]
+                ssh_vals = ds_mean.sossheig.values[i*N_POINTS:(i+1)*N_POINTS, j*N_POINTS:(j+1)*N_POINTS]
+                cell_integral = np.trapz(np.trapz(ssh_vals, dx=lon_vals[1] - lon_vals[0], axis=1), dx=lat_vals[1] - lat_vals[0])
+                integrals.append(cell_integral)
+        return np.array(integrals).reshape(N_SPLINES, N_SPLINES)
+
+    def grid_ref_data_simpson(self, 
+                              n_grids : int) -> np.ndarray:
+        """ 
+        grids the reference data (averaged across time) by numerically integrating the data in each grid cell by Simpson's rule
+        
+        Arguments:
+            n_grids (int)   : The number of grid cells to split the data into (e.g. 1 grid cell = 600x600, 4 grid cells = 300x300)
+
+        Returns:
+            np.ndarray      : The gridded reference data (n_grids x n_grids)
+        """
+        # no. of point / grid cell
+        N_SPLINES = n_grids
+        N_POINTS = int(600 / n_grids)
+        # average dataset over time
+        ds_mean = self.ref_data.mean(dim='time')
+        # compute the integrals
+        integrals = []
+        for i in range(N_SPLINES):
+            for j in range(0, N_SPLINES):
+                # get values
+                lon_vals = ds_mean.lon.values[i*N_POINTS:(i+1)*N_POINTS]
+                lat_vals = ds_mean.lat.values[j*N_POINTS:(j+1)*N_POINTS]
+                ssh_vals = ds_mean.sossheig.values[i*N_POINTS:(i+1)*N_POINTS, j*N_POINTS:(j+1)*N_POINTS]
+                cell_integral = simpson(simpson(ssh_vals, dx=lon_vals[1] - lon_vals[0], axis=1), dx=lat_vals[1] - lat_vals[0])
+                integrals.append(cell_integral)
+        return np.array(integrals).reshape(N_SPLINES, N_SPLINES)
