@@ -378,7 +378,7 @@ class SimulationDataHour(SimulationData):
         
 
 
-class GulfStreamData: 
+class GulfStream: 
 
     """ 
     This class is used to load the observation simulation data from a specified satallite 
