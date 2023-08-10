@@ -150,14 +150,14 @@ class GriddedMatern12ExactGP(Matern12GP):
     
     def q_v(self,):
         # compute matrices
-        Kxx = self._Kxx()
+        Kxx = gpytorch.lazify(self._Kxx())
         Kvx = self._Kvx(self.train_inputs[0])
         Kvv = self._Kvv()
         sigma = gpytorch.lazify(self._sigma())
-        p_f_y_cov = gpytorch.lazify(Kxx - Kxx @ sigma.inv_matmul(Kxx))
+        p_f_y_cov = gpytorch.lazify(Kxx.evaluate() - Kxx.evaluate() @ sigma.inv_matmul(Kxx.evaluate()))
         # compute mean
         mean = Kvx @ sigma.inv_matmul(self.train_targets)
-        cov = Kvv - (Kvx @ sigma.inv_matmul(Kvx.T)) + Kvx @ p_f_y_cov.inv_matmul(Kvx.T)
+        cov = Kvv - (Kvx @ Kxx.inv_matmul(Kvx.T)) + Kvx @ p_f_y_cov.inv_matmul(Kvx.T)
         return gpytorch.distributions.MultivariateNormal(mean, cov)
     
 
